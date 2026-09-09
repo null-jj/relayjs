@@ -1,0 +1,24 @@
+# OS and editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Logs and local environment
+*.log
+.env
+.env.*
+
+# Dependencies and build output
+node_modules/
+coverage/
+dist/
+build/
+.pear/
+
+# Local artifact CLI walkthrough state
+publisher/
+reader/
+downloads/

@@ -1,0 +1,27 @@
+{
+  "name": "relayjs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "relayjs: a trusted-peer registry for versioned artifacts using the Pear ecosystem",
+  "bin": {
+    "relay": "./bin/relay.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check bin/relay.js && node --check src/domain/artifact.js && node --check src/application/artifacts.js && node --check src/infrastructure/files.js && node --check src/infrastructure/registry.js && node --check src/cli.js"
+  },
+  "dependencies": {
+    "corestore": "^7.12.4",
+    "hypercore-crypto": "^3.7.0",
+    "hyperdrive": "^13.3.3",
+    "hyperswarm": "^4.17.1"
+  },
+  "devDependencies": {
+    "@hyperswarm/testnet": "^3.1.4",
+    "streamx": "^2.28.1"
+  }
+}
