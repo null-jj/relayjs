@@ -7,7 +7,7 @@ import test from 'node:test'
 import createTestnet from '@hyperswarm/testnet'
 import { Writable as StreamxWritable } from 'streamx'
 
-import { initRegistry, joinRegistry, openRegistry } from '../src/infrastructure/registry.js'
+import { initRegistry, joinRegistry, openRegistry } from '../dist/src/infrastructure/registry.js'
 
 async function stateDirectory(t, prefix = 'pear-registry-') {
   const directory = await mkdtemp(join(tmpdir(), prefix))

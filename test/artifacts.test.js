@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { createHash } from 'node:crypto'
-import { parseReference, validateManifest } from '../src/domain/artifact.js'
-import { publishArtifact, fetchArtifact, mirrorArtifact } from '../src/application/artifacts.js'
-import { createFileAccess } from '../src/infrastructure/files.js'
+import { parseReference, validateManifest } from '../dist/src/domain/artifact.js'
+import { publishArtifact, fetchArtifact, mirrorArtifact } from '../dist/src/application/artifacts.js'
+import { createFileAccess } from '../dist/src/infrastructure/files.js'
 
 async function fixture(t) {
   const directory = await mkdtemp(join(tmpdir(), 'artifact-test-'))

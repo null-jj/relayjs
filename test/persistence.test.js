@@ -3,9 +3,9 @@ import assert from 'node:assert/strict'
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { initRegistry, openRegistry } from '../src/infrastructure/registry.js'
-import { createFileAccess } from '../src/infrastructure/files.js'
-import { publishArtifact, fetchArtifact, listArtifacts } from '../src/application/artifacts.js'
+import { initRegistry, openRegistry } from '../dist/src/infrastructure/registry.js'
+import { createFileAccess } from '../dist/src/infrastructure/files.js'
+import { publishArtifact, fetchArtifact, listArtifacts } from '../dist/src/application/artifacts.js'
 
 test('published multi-block artifacts survive restart and export without a network', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'artifact-persistence-'))

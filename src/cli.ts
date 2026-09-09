@@ -1,3 +1,32 @@
+import type { EventEmitter } from 'node:events'
+import type { RegistryPort } from './application/ports.js'
+
+interface CliRegistry extends RegistryPort {
+  readonly key: string
+  readonly identity: string
+  trust(peer: string): Promise<void>
+  untrust(peer: string): Promise<void>
+  trustedPeers(): string[]
+  connect(options: { bootstrap?: string[] }): Promise<unknown>
+  close(): Promise<void>
+}
+
+type Output = { write(text: string): unknown }
+type Signals = Pick<EventEmitter, 'once' | 'off'>
+
+interface CliDependencies {
+  stdout?: Output
+  signalSource?: Signals
+  initRegistry?: (directory: string) => Promise<CliRegistry>
+  joinRegistry?: (directory: string, key: string) => Promise<CliRegistry>
+  openRegistry?: (directory: string) => Promise<CliRegistry>
+  createFileAccess?: typeof createFileAccess
+  publishArtifact?: typeof publishArtifact
+  fetchArtifact?: typeof fetchArtifact
+  listArtifacts?: typeof listArtifacts
+  mirrorArtifact?: typeof mirrorArtifact
+}
+
 import { parseArgs } from 'node:util'
 import { homedir } from 'node:os'
 import { resolve } from 'node:path'
@@ -34,11 +63,11 @@ Options:
 
 class UsageError extends Error {}
 
-function usage(message) {
+function usage(message: string): never {
   throw new UsageError(message)
 }
 
-function parseOptions(args) {
+function parseOptions(args: string[]) {
   let parsed
   try {
     parsed = parseArgs({
@@ -56,7 +85,7 @@ function parseOptions(args) {
       },
     })
   } catch (error) {
-    usage(error.message)
+    usage(error instanceof Error ? error.message : String(error))
   }
 
   const timeout = parsed.values.timeout === undefined ? 15_000 : Number(parsed.values.timeout)
@@ -81,28 +110,28 @@ function parseOptions(args) {
   }
 }
 
-function requireArity(positionals, count, command) {
+function requireArity(positionals: string[], count: number, command: string) {
   if (positionals.length !== count) usage(`${command} expects ${count} argument${count === 1 ? '' : 's'}`)
 }
 
-function requireAtMostArity(positionals, count, command) {
+function requireAtMostArity(positionals: string[], count: number, command: string) {
   if (positionals.length > count) usage(`${command} expects at most ${count} argument${count === 1 ? '' : 's'}`)
 }
 
-function requireOption(value, option) {
+function requireOption(value: string | undefined, option: string): string {
   if (!value) usage(`${option} is required`)
   return value
 }
 
-function identityPayload(registry, store) {
+function identityPayload(registry: CliRegistry, store: string) {
   return { registryKey: registry.key, identity: registry.identity, store }
 }
 
-function emit(output, value) {
+function emit(output: Output, value: unknown) {
   output.write(`${JSON.stringify(value)}\n`)
 }
 
-function connectInBackground(registry, bootstrap) {
+function connectInBackground(registry: CliRegistry, bootstrap: string[]) {
   try {
     const connected = registry.connect(bootstrap.length ? { bootstrap } : {})
     if (connected && typeof connected.catch === 'function') connected.catch(() => {})
@@ -111,19 +140,24 @@ function connectInBackground(registry, bootstrap) {
   }
 }
 
-function throwIfAborted(signal) {
+function throwIfAborted(signal: AbortSignal) {
   if (signal.aborted) throw signal.reason
 }
 
-async function boundedWorkflow({ registry, signalSource, timeout, operation, work }) {
+async function boundedWorkflow<T>({ registry, signalSource, timeout, operation, work }: {
+  registry: CliRegistry
+  signalSource: Signals
+  timeout: number
+  operation: string
+  work: (signal: AbortSignal) => Promise<T>
+}): Promise<T> {
   const controller = new AbortController()
-  let timer
-  let interruption
-  let cleanup
-  const stopped = new Promise((resolveStopped) => {
-    const stop = (reason) => {
-      interruption = reason instanceof Error ? reason : new Error(`Operation cancelled by ${reason}`)
-      resolveStopped({ interrupted: true })
+  let timer: ReturnType<typeof setTimeout>
+  let cleanup = () => {}
+  const stopped = new Promise<{ kind: 'interrupted'; error: Error }>((resolveStopped) => {
+    const stop = (reason: Error | string) => {
+      const interruption = reason instanceof Error ? reason : new Error(`Operation cancelled by ${reason}`)
+      resolveStopped({ kind: 'interrupted', error: interruption })
     }
     const onInterrupt = () => stop('SIGINT')
     const onTerminate = () => stop('SIGTERM')
@@ -138,24 +172,22 @@ async function boundedWorkflow({ registry, signalSource, timeout, operation, wor
   })
   const pending = Promise.resolve().then(() => work(controller.signal))
   const completed = pending.then(
-    (value) => ({ value }),
-    (error) => ({ error }),
+    (value) => ({ kind: 'value' as const, value }),
+    (error: unknown) => ({ kind: 'error' as const, error }),
   )
   const result = await Promise.race([completed, stopped])
   cleanup()
-  if (!result.interrupted) {
-    if (result.error) throw result.error
-    return result.value
-  }
+  if (result.kind === 'value') return result.value
+  if (result.kind === 'error') throw result.error
 
-  controller.abort(interruption)
+  controller.abort(result.error)
   await registry.close().catch(() => {})
   await pending.catch(() => {})
-  throw interruption
+  throw result.error
 }
 
-function waitForShutdown(signalSource) {
-  return new Promise((resolveShutdown) => {
+function waitForShutdown(signalSource: Signals) {
+  return new Promise<void>((resolveShutdown) => {
     const finish = () => {
       signalSource.off('SIGINT', finish)
       signalSource.off('SIGTERM', finish)
@@ -166,19 +198,20 @@ function waitForShutdown(signalSource) {
   })
 }
 
-function assertCommandOptions(command, options) {
-  const allowed = {
+function assertCommandOptions(command: string, options: ReturnType<typeof parseOptions>) {
+  const commandOptions: Record<string, string[]> = {
     init: ['store'], join: ['store'], identity: ['store'], trust: ['store'], untrust: ['store'],
     publish: ['store', 'name', 'version'], fetch: ['store', 'timeout', 'bootstrap', 'output'],
     list: ['store', 'timeout', 'bootstrap'], seed: ['store', 'timeout', 'bootstrap'],
-  }[command]
+  }
+  const allowed = commandOptions[command]
   if (!allowed) return
   for (const name of options.supplied) {
     if (!allowed.includes(name)) usage(`--${name} is not valid for ${command}`)
   }
 }
 
-export async function run(argv, dependencies = {}) {
+export async function run(argv: string[], dependencies: CliDependencies = {}) {
   const output = dependencies.stdout ?? process.stdout
   const signalSource = dependencies.signalSource ?? process
   const factories = {
@@ -204,7 +237,7 @@ export async function run(argv, dependencies = {}) {
   }
   assertCommandOptions(command, options)
 
-  let registry
+  let registry: CliRegistry | undefined
   try {
     switch (command) {
       case 'init':
@@ -233,7 +266,7 @@ export async function run(argv, dependencies = {}) {
         requireArity(options.positionals, 1, command)
         registry = await factories.openRegistry(options.store)
         const manifest = await factories.publishArtifact(
-          { registry, files: factories.createFileAccess(options.store) },
+          { registry, files: factories.createFileAccess() },
           { source: options.positionals[0], name: requireOption(options.name, '--name'), version: requireOption(options.version, '--version') },
         )
         emit(output, manifest)
@@ -242,13 +275,14 @@ export async function run(argv, dependencies = {}) {
       case 'fetch': {
         requireArity(options.positionals, 1, command)
         registry = await factories.openRegistry(options.store)
-        const files = factories.createFileAccess(options.store)
+        const activeRegistry = registry
+        const files = factories.createFileAccess()
         const manifest = await boundedWorkflow({
           registry, signalSource, timeout: options.timeout, operation: 'Fetch',
           work: (signal) => {
-            connectInBackground(registry, options.bootstrap)
+            connectInBackground(activeRegistry, options.bootstrap)
             return factories.fetchArtifact(
-              { registry, files },
+              { registry: activeRegistry, files },
               { ...parseReference(options.positionals[0]), destination: requireOption(options.output, '--output'), signal },
             )
           },
@@ -256,36 +290,39 @@ export async function run(argv, dependencies = {}) {
         emit(output, manifest)
         break
       }
-      case 'list':
+      case 'list': {
         requireArity(options.positionals, 0, command)
         registry = await factories.openRegistry(options.store)
+        const activeRegistry = registry
         emit(output, await boundedWorkflow({
           registry, signalSource, timeout: options.timeout, operation: 'List',
           work: async (signal) => {
-            connectInBackground(registry, options.bootstrap)
-            await registry.sync()
+            connectInBackground(activeRegistry, options.bootstrap)
+            await activeRegistry.sync()
             throwIfAborted(signal)
-            return factories.listArtifacts({ registry })
+            return factories.listArtifacts({ registry: activeRegistry })
           },
         }))
         break
+      }
       case 'seed': {
         requireAtMostArity(options.positionals, 1, command)
         registry = await factories.openRegistry(options.store)
-        const files = factories.createFileAccess(options.store)
+        const activeRegistry = registry
+        const files = factories.createFileAccess()
         if (options.positionals[0]) {
           emit(output, await boundedWorkflow({
             registry, signalSource, timeout: options.timeout, operation: 'Seed',
             work: (signal) => {
-              connectInBackground(registry, options.bootstrap)
+              connectInBackground(activeRegistry, options.bootstrap)
               return factories.mirrorArtifact(
-                { registry, files },
+                { registry: activeRegistry, files },
                 { ...parseReference(options.positionals[0]), signal },
               )
             },
           }))
         } else {
-          connectInBackground(registry, options.bootstrap)
+          connectInBackground(activeRegistry, options.bootstrap)
           emit(output, { identity: registry.identity, status: 'seeding' })
         }
         await waitForShutdown(signalSource)

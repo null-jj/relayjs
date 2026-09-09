@@ -10,7 +10,7 @@ A team should be able to publish an internal build once, fetch an exact version 
 
 ## Decision
 
-Build `relayjs`, one Node.js ESM application with a `relay` CLI entry point and three small boundaries. Use native Node APIs for argument parsing, hashing, files, and tests. Hyperdrive, Corestore, and Hyperswarm are required because actual peer replication is the purpose of the prototype. A Node CLI is the first delivery target; Pear/Bare packaging remains future work.
+Build `relayjs`, one strict TypeScript application compiled to Node.js ESM with a `relay` CLI entry point and three small boundaries. Use native Node APIs for argument parsing, hashing, files, and tests. Hyperdrive, Corestore, and Hyperswarm are required because actual peer replication is the purpose of the prototype. A Node CLI is the first delivery target; Pear/Bare packaging remains future work.
 
 ```mermaid
 flowchart TD
@@ -26,11 +26,12 @@ The CLI wires concrete adapters into use cases. Domain code imports no framework
 
 | Boundary | Responsibility |
 | --- | --- |
-| `src/domain/artifact.js` | Safe exact references and manifest validation |
-| `src/application/artifacts.js` | Immutable publish, resolve, fetch, mirror, list |
-| `src/infrastructure/files.js` | Snapshot a regular file; stream hashing; verified export without overwrite |
-| `src/infrastructure/registry.js` | Persistence, signing-key ownership, device identity, trust, replication |
-| `src/cli.js` | Parse input, compose adapters, emit JSON, enforce deadlines, close resources |
+| `src/domain/artifact.ts` | Safe exact references and manifest validation |
+| `src/application/ports.ts` | Typed registry, file, stream, and cancellation contracts |
+| `src/application/artifacts.ts` | Immutable publish, resolve, fetch, mirror, list |
+| `src/infrastructure/files.ts` | Snapshot a regular file; stream hashing; verified export without overwrite |
+| `src/infrastructure/registry.ts` | Persistence, signing-key ownership, device identity, trust, replication |
+| `src/cli.ts` | Parse input, compose adapters, emit JSON, enforce deadlines, close resources |
 
 ## Data model
 
@@ -65,14 +66,22 @@ Trust grants access to the entire registry, including history, rather than indiv
 - The prototype provides no SSO, per-artifact permissions, blind encrypted hosting, key rotation, publisher recovery, automatic garbage collection, or package-protocol compatibility.
 - Each running CLI owns its state directory; stop its seed process before using that same state for another command.
 - Internet-free operation needs a deliberately configured local DHT bootstrap network. Public peer discovery does not establish an offline-LAN promise.
-- First architecture assessment: **8/10** against the clean-architecture skill. Domain/use-case imports point inward and adapters are replaceable; ports are documented duck-typed contracts rather than compiler-enforced types. Typed port contracts and an automated import-boundary check would strengthen this as the application grows.
+- Architecture assessment: **9/10** against the clean-architecture skill. Domain/use-case imports point inward; strict TypeScript now checks explicit port contracts and adapter implementations. An automated import-boundary check would strengthen this as the application grows.
 
 ## Verification
 
-Acceptance requires real storage/replication tests alongside use-case tests: exact binary bytes, immutable versions, unauthorized connection denial, replica availability after publisher shutdown, cache persistence, corrupt-output rejection, timeout handling, and preserved destinations. See `npm test` for the executable checks and the CLI guide for operational limitations.
+Acceptance requires real storage/replication tests alongside use-case tests: exact binary bytes, immutable versions, unauthorized connection denial, replica availability after publisher shutdown, cache persistence, corrupt-output rejection, timeout handling, and preserved destinations. See `bun run test` for the executable checks and the CLI guide for operational limitations.
 
 ## References
 
 - [Hyperdrive](https://github.com/holepunchto/hyperdrive)
 - [Hyperswarm](https://github.com/holepunchto/hyperswarm)
 - [HyperDHT isolated network configuration](https://github.com/holepunchto/hyperdht)
+
+## TypeScript build
+
+`tsconfig.json` enables strict checking and NodeNext module resolution. Application and CLI sources live in `src/**/*.ts` and `bin/relay.ts`; `tsc` emits runnable JavaScript to ignored `dist/`. The npm executable points to `dist/bin/relay.js`, and the prepare lifecycle builds it for checkout/Git installs. Regression tests remain JavaScript and exercise the compiled production modules. `src/pear.d.ts` describes only the installed Pear APIs used here because those dependencies do not ship declarations. Network/file data enters as `unknown` and is validated before use.
+
+## Bun tooling
+
+Use Bun as the package manager and script runner with `bun.lock` as the single dependency lockfile. `bun run relay` explicitly launches Node.js, as does the executable shebang. The native locking dependency `fs-native-extensions` aborts inside Bun's unsupported `uv_get_osfhandle` on Bun 1.3.14 and 1.4.2 (Linux). Disabling locking would weaken the single-process storage guarantees, so runtime migration remains blocked; neither dependency locking nor file locking is bypassed. The tests continue to execute under Node.js via `bun run test`.

@@ -1,3 +1,24 @@
+import type { RegistryPort } from '../application/ports.js'
+import type { ArtifactManifest } from '../domain/artifact.js'
+import type { KeyPair } from 'hypercore-crypto'
+import type { Bootstrap } from 'hyperswarm'
+import type { Readable as StreamxReadable, Writable as StreamxWritable } from 'streamx'
+
+interface RegistryConfig {
+  version: 1
+  registryKey: string
+  identity: { publicKey: string; secretKey: string }
+  trustedPeers: string[]
+}
+
+interface RegistryOptions {
+  state: string
+  store: Corestore
+  drive: Hyperdrive
+  identity: KeyPair
+  trustedPeers: string[]
+}
+
 import { mkdir, open, readFile, chmod, rename } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
@@ -11,7 +32,7 @@ const CONFIG_FILE = 'registry.json'
 const STORE_DIRECTORY = 'store'
 const MAX_MANIFEST_BYTES = 1024 * 1024
 
-export async function initRegistry(directory) {
+export async function initRegistry(directory: string) {
   const state = await prepareStateDirectory(directory)
   const configPath = join(state, CONFIG_FILE)
   await assertConfigAbsent(configPath)
@@ -28,7 +49,7 @@ export async function initRegistry(directory) {
   }
 }
 
-export async function joinRegistry(directory, registryKey) {
+export async function joinRegistry(directory: string, registryKey: string) {
   const state = await prepareStateDirectory(directory)
   const key = hexKey(registryKey, 'registry key')
   const configPath = join(state, CONFIG_FILE)
@@ -50,13 +71,20 @@ export async function joinRegistry(directory, registryKey) {
   }
 }
 
-export async function openRegistry(directory) {
+export async function openRegistry(directory: string) {
   const state = await prepareStateDirectory(directory)
-  const config = await readConfig(join(state, CONFIG_FILE))
+  const config = await readConfigIfPresent(join(state, CONFIG_FILE))
+  if (!config) {
+    throw new Error(
+      `No registry initialized at ${state}.\n` +
+      'Run "bun run relay init" to create one, or "bun run relay join REGISTRY_KEY" to join an existing registry.\n' +
+      'If you use --store, pass the same directory to setup and subsequent commands.'
+    )
+  }
   return createRegistry(state, identityFromConfig(config), hexKey(config.registryKey, 'registry key'), config.trustedPeers)
 }
 
-async function createRegistry(state, identity, key = null, trustedPeers = []) {
+async function createRegistry(state: string, identity: KeyPair, key: Buffer | null = null, trustedPeers: string[] = []) {
   const store = new Corestore(join(state, STORE_DIRECTORY))
   const drive = new Hyperdrive(store, key || undefined)
 
@@ -70,8 +98,22 @@ async function createRegistry(state, identity, key = null, trustedPeers = []) {
   }
 }
 
-class Registry {
-  constructor({ state, store, drive, identity, trustedPeers }) {
+export class Registry implements RegistryPort {
+  readonly state: string
+  readonly store: Corestore
+  readonly drive: Hyperdrive
+  readonly _identity: KeyPair
+  readonly key: string
+  readonly identity: string
+  readonly writable: boolean
+  readonly _configPath: string
+  readonly _trusted: Set<string>
+  _swarm: Hyperswarm | null
+  _doneFindingPeer: (() => void) | null
+  _initialDiscoveryDone: boolean
+  _authenticatedPeer: boolean
+  _closed: boolean
+  constructor({ state, store, drive, identity, trustedPeers }: RegistryOptions) {
     this.state = state
     this.store = store
     this.drive = drive
@@ -88,7 +130,7 @@ class Registry {
     this._closed = false
   }
 
-  async readManifest(name, version) {
+  async readManifest(name: string, version: string): Promise<unknown> {
     const path = manifestPath(name, version)
     const wait = Boolean(this._swarm && !this.writable)
     const entry = await this.drive.entry(path, { wait })
@@ -99,14 +141,14 @@ class Registry {
     const data = await this.drive.get(path, { wait })
     if (!data) return null
     if (data.byteLength > MAX_MANIFEST_BYTES) throw new Error('Manifest exceeds the maximum allowed size')
-    const manifest = JSON.parse(data.toString('utf8'))
+    const manifest: unknown = JSON.parse(data.toString('utf8'))
     if (!manifest || Array.isArray(manifest) || typeof manifest !== 'object') {
       throw new Error('Invalid manifest')
     }
     return manifest
   }
 
-  async writeManifest(name, version, manifest) {
+  async writeManifest(name: string, version: string, manifest: ArtifactManifest) {
     this._assertWritable()
     const path = manifestPath(name, version)
     if (!manifest || Array.isArray(manifest) || typeof manifest !== 'object') {
@@ -117,7 +159,7 @@ class Registry {
     await this.drive.put(path, data)
   }
 
-  async writeBlob(id, readable) {
+  async writeBlob(id: string, readable: Readable) {
     this._assertWritable()
     const destination = this.drive.createWriteStream(blobPath(id), { dedup: true })
     // Hyperdrive exposes streamx streams. Adapt them before handing the stream
@@ -126,11 +168,11 @@ class Registry {
     await pipeline(readable, asNodeWritable(destination))
   }
 
-  readBlob(id) {
+  readBlob(id: string) {
     return asNodeReadable(this.drive.createReadStream(blobPath(id), { wait: true }))
   }
 
-  async listManifests() {
+  async listManifests(): Promise<unknown[]> {
     const manifests = []
     const wait = Boolean(this._swarm && !this.writable)
     for await (const entry of this.drive.list('/artifacts', { recursive: true, wait })) {
@@ -143,7 +185,7 @@ class Registry {
     return manifests
   }
 
-  async trust(peerHex) {
+  async trust(peerHex: string) {
     const peer = hexKey(peerHex, 'peer identity').toString('hex')
     this._trusted.add(peer)
     await this._saveTrust()
@@ -155,7 +197,7 @@ class Registry {
     if (this._swarm) this._swarm.joinPeer(Buffer.from(peer, 'hex'))
   }
 
-  async untrust(peerHex) {
+  async untrust(peerHex: string) {
     const peer = hexKey(peerHex, 'peer identity').toString('hex')
     this._trusted.delete(peer)
     await this._saveTrust()
@@ -169,7 +211,7 @@ class Registry {
     return [...this._trusted].sort()
   }
 
-  async connect({ bootstrap } = {}) {
+  async connect({ bootstrap }: { bootstrap?: Bootstrap } = {}) {
     this._assertOpen()
     if (this._swarm) return this._swarm
 
@@ -254,14 +296,14 @@ class Registry {
   }
 }
 
-async function prepareStateDirectory(directory) {
+async function prepareStateDirectory(directory: string) {
   const state = resolve(directory)
   await mkdir(state, { recursive: true, mode: 0o700 })
   await chmod(state, 0o700)
   return state
 }
 
-function configFor(registry) {
+function configFor(registry: Registry): RegistryConfig {
   return {
     version: 1,
     registryKey: registry.key,
@@ -277,43 +319,51 @@ function makeIdentity() {
   return crypto.keyPair()
 }
 
-function identityFromConfig(config) {
+function identityFromConfig(config: RegistryConfig) {
   const publicKey = hexKey(config?.identity?.publicKey, 'identity public key')
   const secretKey = Buffer.from(config?.identity?.secretKey || '', 'hex')
   if (secretKey.length !== 64) throw new Error('Invalid identity secret key in registry config')
   return { publicKey, secretKey }
 }
 
-async function assertConfigAbsent(path) {
+async function assertConfigAbsent(path: string) {
   const config = await readConfigIfPresent(path)
   if (config) throw new Error('Registry is already initialized in this state directory')
 }
 
-async function readConfigIfPresent(path) {
+async function readConfigIfPresent(path: string) {
   try {
     return await readConfig(path)
   } catch (error) {
-    if (error.code === 'ENOENT') return null
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null
     throw error
   }
 }
 
-async function readConfig(path) {
+async function readConfig(path: string): Promise<RegistryConfig> {
   const data = await readFile(path, 'utf8')
-  let config
+  let input: unknown
   try {
-    config = JSON.parse(data)
+    input = JSON.parse(data)
   } catch {
     throw new Error('Invalid registry config')
   }
-  if (!config || config.version !== 1 || !Array.isArray(config.trustedPeers)) {
+  if (!input || typeof input !== 'object') throw new Error('Invalid registry config')
+  const config = input as Record<string, unknown>
+  if (config.version !== 1 || !Array.isArray(config.trustedPeers) || !config.identity || typeof config.identity !== 'object') {
     throw new Error('Invalid registry config')
   }
-  for (const peer of config.trustedPeers) hexKey(peer, 'trusted peer identity')
-  return config
+  const identity = config.identity as Record<string, unknown>
+  const registryKey = hexKey(config.registryKey, 'registry key').toString('hex')
+  const publicKey = hexKey(identity.publicKey, 'identity public key').toString('hex')
+  if (typeof identity.secretKey !== 'string' || !/^[a-fA-F0-9]{128}$/.test(identity.secretKey)) {
+    throw new Error('Invalid identity secret key in registry config')
+  }
+  const trustedPeers = config.trustedPeers.map(peer => hexKey(peer, 'trusted peer identity').toString('hex'))
+  return { version: 1, registryKey, identity: { publicKey, secretKey: identity.secretKey }, trustedPeers }
 }
 
-async function writeNewConfig(path, config) {
+async function writeNewConfig(path: string, config: RegistryConfig) {
   const handle = await open(path, 'wx', 0o600)
   try {
     await handle.writeFile(JSON.stringify(config, null, 2) + '\n', 'utf8')
@@ -323,7 +373,7 @@ async function writeNewConfig(path, config) {
   }
 }
 
-async function writeConfig(path, config) {
+async function writeConfig(path: string, config: RegistryConfig) {
   const temporary = `${path}.${process.pid}.${crypto.randomBytes(8).toString('hex')}.tmp`
   const handle = await open(temporary, 'wx', 0o600)
   try {
@@ -336,35 +386,35 @@ async function writeConfig(path, config) {
   await rename(temporary, path)
 }
 
-function manifestPath(name, version) {
+function manifestPath(name: string, version: string) {
   return `/artifacts/${pathPart(name, 'artifact name')}/${pathPart(version, 'artifact version')}.json`
 }
 
-function blobPath(id) {
+function blobPath(id: string) {
   return `/blobs/${hexDigest(id)}`
 }
 
-function pathPart(value, label) {
+function pathPart(value: unknown, label: string) {
   if (typeof value !== 'string' || value.length === 0 || value.includes('/') || value.includes('\\') || value.includes('\0') || value === '.' || value === '..') {
     throw new TypeError(`Invalid ${label}`)
   }
   return value
 }
 
-function hexDigest(value) {
+function hexDigest(value: unknown) {
   if (typeof value !== 'string' || !/^[a-fA-F0-9]{64}$/.test(value)) throw new TypeError('Invalid blob id')
   return value.toLowerCase()
 }
 
-function hexKey(value, label) {
+function hexKey(value: unknown, label: string) {
   if (typeof value !== 'string' || !/^[a-fA-F0-9]{64}$/.test(value)) throw new TypeError(`Invalid ${label}`)
   return Buffer.from(value, 'hex')
 }
 
-function asNodeWritable(stream) {
-  let output
+function asNodeWritable(stream: StreamxWritable) {
+  let output: Writable
   let finished = false
-  const fail = (error) => {
+  const fail = (error: Error) => {
     if (!output.destroyed) output.destroy(error)
   }
   output = new Writable({
@@ -373,16 +423,16 @@ function asNodeWritable(stream) {
       stream.once('drain', callback)
     },
     final(callback) {
-      const done = (error) => {
+      const done = (error?: Error | null) => {
         stream.removeListener('finish', done)
         finished = !error
         callback(error)
       }
       stream.once('finish', done)
-      stream.end()
+      stream.end(undefined)
     },
     destroy(error, callback) {
-      stream.destroy(error)
+      stream.destroy(error ?? undefined)
       callback(error)
     }
   })
@@ -393,14 +443,14 @@ function asNodeWritable(stream) {
   return output
 }
 
-function asNodeReadable(stream) {
+function asNodeReadable(stream: StreamxReadable) {
   let ended = false
   const output = new Readable({
     read() {
       stream.resume()
     },
     destroy(error, callback) {
-      stream.destroy(error)
+      stream.destroy(error ?? undefined)
       callback(error)
     }
   })

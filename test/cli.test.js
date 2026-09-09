@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { promisify } from 'node:util'
 import { EventEmitter } from 'node:events'
-import { run } from '../src/cli.js'
+import { run } from '../dist/src/cli.js'
 
 const execFileAsync = promisify(execFile)
-const cli = join(process.cwd(), 'bin', 'relay.js')
+const cli = join(process.cwd(), 'dist', 'bin', 'relay.js')
 
 async function invoke(args) {
   try {
@@ -195,4 +195,19 @@ test('seed mirrors an already cached artifact without synchronizing first', asyn
   assert.equal(syncCalls, 0)
   assert.equal(closed, true)
   assert.match(output.value, /"name":"thing"/)
+})
+
+
+test('seed without a registry explains setup and does not create registry data', async t => {
+  const store = await mkdtemp(join(tmpdir(), 'relayjs-missing-registry-'))
+  t.after(() => rm(store, { recursive: true, force: true }))
+  const result = await invoke(['seed', 'app@1.0', '--store', store])
+  assert.equal(result.code, 1)
+  assert.match(result.stderr, /No registry initialized/)
+  assert.match(result.stderr, /bun run relay init/)
+  assert.match(result.stderr, /bun run relay join REGISTRY_KEY/)
+  assert.match(result.stderr, /--store/)
+  assert.doesNotMatch(result.stderr, /ENOENT/)
+  assert.equal(result.stdout, '')
+  assert.deepEqual(await readdir(store), [])
 })

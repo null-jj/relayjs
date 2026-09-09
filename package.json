@@ -5,14 +5,18 @@
   "type": "module",
   "description": "relayjs: a trusted-peer registry for versioned artifacts using the Pear ecosystem",
   "bin": {
-    "relay": "./bin/relay.js"
+    "relay": "./dist/bin/relay.js"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22",
+    "bun": ">=1.3.14"
   },
   "scripts": {
-    "test": "node --test",
-    "check": "node --check bin/relay.js && node --check src/domain/artifact.js && node --check src/application/artifacts.js && node --check src/infrastructure/files.js && node --check src/infrastructure/registry.js && node --check src/cli.js"
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "bun run build && node --test test/*.test.js",
+    "prepare": "bun run build",
+    "relay": "node dist/bin/relay.js"
   },
   "dependencies": {
     "corestore": "^7.12.4",
@@ -22,6 +26,16 @@
   },
   "devDependencies": {
     "@hyperswarm/testnet": "^3.1.4",
-    "streamx": "^2.28.1"
-  }
+    "@types/node": "^22.20.1",
+    "streamx": "^2.28.1",
+    "typescript": "^7.0.2"
+  },
+  "files": [
+    "dist/bin",
+    "dist/src",
+    "README.md",
+    "docs",
+    "decisions"
+  ],
+  "packageManager": "bun@1.3.14"
 }

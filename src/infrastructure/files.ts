@@ -1,3 +1,4 @@
+import type { FileAccess, Integrity } from '../application/ports.js'
 import { createReadStream, createWriteStream } from 'node:fs'
 import { open, mkdir, mkdtemp, rm, link } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
@@ -6,10 +7,10 @@ import { createHash } from 'node:crypto'
 import { Transform, Writable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
-function meter(expected) {
+function meter(expected?: Integrity) {
   const hash = createHash('sha256')
   let size = 0
-  const stream = new Transform({
+  const stream: Transform & { result?: Integrity } = new Transform({
     transform(chunk, encoding, callback) {
       size += chunk.length
       if (!Number.isSafeInteger(size) || (expected && size > expected.size)) {
@@ -32,21 +33,22 @@ function meter(expected) {
   return stream
 }
 
-export function createFileAccess() {
+export function createFileAccess(): FileAccess {
   return {
     async prepare(source) {
       const handle = await open(source, 'r')
-      let directory
+      let directory: string | undefined
       try {
         if (!(await handle.stat()).isFile()) throw new Error('Publish source must be a regular file')
-        directory = await mkdtemp(join(tmpdir(), 'pear-artifact-publish-'))
+        const snapshotDirectory = directory = await mkdtemp(join(tmpdir(), 'pear-artifact-publish-'))
         const path = join(directory, 'snapshot')
         const measured = meter()
         await pipeline(handle.createReadStream(), measured, createWriteStream(path, { flags: 'wx', mode: 0o600 }))
+        if (!measured.result) throw new Error('File hashing did not complete')
         return {
           ...measured.result, filename: basename(source),
           stream: () => createReadStream(path),
-          cleanup: () => rm(directory, { recursive: true, force: true }),
+          cleanup: () => rm(snapshotDirectory, { recursive: true, force: true }),
         }
       } catch (error) {
         if (directory) await rm(directory, { recursive: true, force: true })
@@ -57,7 +59,7 @@ export function createFileAccess() {
     },
 
     async exportVerified(readable, destination, manifest, { signal } = {}) {
-      let directory
+      let directory: string | undefined
       try {
         if (!destination) throw new Error('An output path is required')
         signal?.throwIfAborted()
@@ -72,7 +74,7 @@ export function createFileAccess() {
         await link(temporary, target)
       } catch (error) {
         readable.destroy()
-        if (error.code === 'EEXIST') throw new Error('Output already exists; choose a different path')
+        if (error instanceof Error && 'code' in error && error.code === 'EEXIST') throw new Error('Output already exists; choose a different path')
         throw error
       } finally {
         if (directory) await rm(directory, { recursive: true, force: true })

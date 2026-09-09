@@ -5,10 +5,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
 import createTestnet from '@hyperswarm/testnet'
-import { initRegistry, joinRegistry, openRegistry } from '../src/infrastructure/registry.js'
-import { publishArtifact } from '../src/application/artifacts.js'
-import { createFileAccess } from '../src/infrastructure/files.js'
-import { run } from '../src/cli.js'
+import { initRegistry, joinRegistry, openRegistry } from '../dist/src/infrastructure/registry.js'
+import { publishArtifact } from '../dist/src/application/artifacts.js'
+import { createFileAccess } from '../dist/src/infrastructure/files.js'
+import { run } from '../dist/src/cli.js'
 
 test('CLI fetch uses a replica after publisher shutdown and reports unavailable peers', { timeout: 30_000 }, async t => {
   const directory = await mkdtemp(join(tmpdir(), 'artifact-workflow-'))
