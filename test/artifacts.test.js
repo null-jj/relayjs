@@ -84,9 +84,12 @@ test('failed blob storage never publishes a manifest', async t => {
   const f = await fixture(t)
   const source = join(f.directory, 'build.bin')
   await writeFile(source, 'data')
-  f.registry.writeBlob = async (id, stream) => { stream.destroy(); throw new Error('Disk full') }
+  let failedStream
+  f.registry.writeBlob = async (id, stream) => { failedStream = stream; stream.destroy(); throw new Error('Disk full') }
   await assert.rejects(publishArtifact(f, { source, name: 'build', version: '1' }), /Disk full/)
   assert.equal(f.manifests.size, 0)
+  assert.equal(failedStream.closed, true, 'Publication must await reader closure before returning')
+  await assert.rejects(readFile(failedStream.path), { code: 'ENOENT' })
 })
 
 test('manifest substitution is rejected before reading its blob', async t => {

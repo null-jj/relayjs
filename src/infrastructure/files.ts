@@ -45,10 +45,27 @@ export function createFileAccess(): FileAccess {
         const measured = meter()
         await pipeline(handle.createReadStream(), measured, createWriteStream(path, { flags: 'wx', mode: 0o600 }))
         if (!measured.result) throw new Error('File hashing did not complete')
+        const readers = new Set<ReturnType<typeof createReadStream>>()
         return {
           ...measured.result, filename: basename(source),
-          stream: () => createReadStream(path),
-          cleanup: () => rm(snapshotDirectory, { recursive: true, force: true }),
+          stream: () => {
+            const reader = createReadStream(path)
+            readers.add(reader)
+            // A consumer can cancel before fs.open completes. Keep that delayed
+            // error observed while pipeline consumers still receive it normally.
+            reader.on('error', () => {})
+            reader.once('close', () => readers.delete(reader))
+            return reader
+          },
+          cleanup: async () => {
+            const closing = [...readers].map(reader => new Promise<void>(resolve => {
+              if (reader.closed) return resolve()
+              reader.once('close', resolve)
+              reader.destroy()
+            }))
+            await Promise.all(closing)
+            await rm(snapshotDirectory, { recursive: true, force: true })
+          },
         }
       } catch (error) {
         if (directory) await rm(directory, { recursive: true, force: true })

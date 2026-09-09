@@ -1,0 +1,62 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -12,24 +12,6 @@
+ fetch_package("github:holepunchto/librocksdb#1a00e82")
+ fetch_package("github:holepunchto/libjstl#387f6d0")
+ 
+-add_bare_module(rocksdb_native_bare)
+-
+-target_sources(
+-  ${rocksdb_native_bare}
+-  PRIVATE
+-    binding.cc
+-)
+-
+-target_link_libraries(
+-  ${rocksdb_native_bare}
+-  PRIVATE
+-    $<TARGET_OBJECTS:rocksdb>
+-    jstl
+-  PUBLIC
+-    rocksdb
+-    rocksdb_facebook
+-)
+-
+ add_napi_module(rocksdb_native_napi)
+ 
+ target_sources(
+@@ -37,6 +19,14 @@
+   PRIVATE
+     binding.cc
+ )
++
++# Bun lacks libuv's work queue. Compile the pinned librocksdb wrapper against
++# the Node-API work bridge, while keeping this experimental replacement local.
++target_compile_options(rocksdb PRIVATE "-include${CMAKE_CURRENT_SOURCE_DIR}/async-work.h")
++
++target_sources(${rocksdb_native_napi} PRIVATE async-work.c)
++target_include_directories(${rocksdb_native_napi} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
++target_compile_options(${rocksdb_native_napi} PRIVATE -UNDEBUG)
+ 
+ target_compile_definitions(
+   ${rocksdb_native_napi}
+--- a/binding.cc
++++ b/binding.cc
+@@ -9,6 +9,8 @@
+ #include <string.h>
+ #include <utf.h>
+ #include <uv.h>
++
++#include "async-work.h"
+ 
+ using rocksdb_native_on_open_t = js_function_t<void, js_receiver_t, std::optional<js_object_t>>;
+ using rocksdb_native_on_close_t = js_function_t<void, js_receiver_t>;
+@@ -2158,6 +2160,8 @@
+ rocksdb_native_exports(js_env_t *env, js_value_t *exports) {
+   int err;
+ 
++  relayjs_async_init(env);
++
+ #define V(name, fn) \
+   err = js_set_property<fn>(env, exports, name); \
+   assert(err == 0);

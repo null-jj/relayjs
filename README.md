@@ -44,6 +44,6 @@ This is a technical prototype with one publisher per registry and whole-registry
 
 ## Bun runtime limitation
 
-Bun manages dependencies, the lockfile, and project commands. The `relay` executable and regression tests still run on Node.js. Running registry initialization directly with Bun 1.3.14 or 1.4.2 on Linux crashes in `fs-native-extensions` because Bun does not implement `uv_get_osfhandle`. File locking remains enabled.
+Bun manages dependencies, the lockfile, and project commands. The `relay` executable and regression tests still run on Node.js. Running registry initialization directly with Bun 1.3.14 or 1.4.2 on Linux crashes in `fs-native-extensions` because Bun does not implement `uv_get_osfhandle`. File locking remains enabled. An isolated native adapter now passes locking, registry startup, and RocksDB persistence checks under Bun 1.4.2. Full peer transfers remain blocked by `uv_interface_addresses` in the networking dependency; abrupt Worker termination also exposes a native cleanup failure.
 
-Use `bun run relay seed app@1.0` or the linked `relay` executable. Full Bun runtime support requires resolving the native compatibility issue; switching the test runner to `bun test` does not resolve it. See [Bun's libuv tracking issue](https://github.com/oven-sh/bun/issues/18546).
+Use `bun run relay seed app@1.0` or the linked `relay` executable. Full Bun runtime support requires resolving the native compatibility issue; switching the test runner to `bun test` does not resolve it. See the [native compatibility experiment](experiments/bun-native/README.md) for reproduction commands and [Bun's libuv tracking issue](https://github.com/oven-sh/bun/issues/18546).
