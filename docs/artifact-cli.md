@@ -8,10 +8,10 @@ Install Bun 1.3.14+ and Node.js 22+. Bun handles installation and project comman
 
 ```sh
 bun install --frozen-lockfile
-bun run relay --help
+bun run dev --help
 ```
 
-The package defines a dedicated executable named `relay`. You can run `bun run relay --help` after building, or install the command from this checkout:
+The package defines a dedicated executable named `relay`. You can run `bun run dev --help` with automatic rebuilding, or install the command from this checkout:
 
 ```sh
 bun link
@@ -22,16 +22,16 @@ Linking is optional and changes your local Bun executable directory; no npm pack
 
 `bun install --frozen-lockfile` runs the TypeScript build automatically. After editing `.ts` files, run `bun run build` to refresh `dist/`. `bun run check` typechecks without emitting files; `bun run test` builds and runs the existing JavaScript regression tests against the compiled application.
 
-Commands print JSON to stdout. Errors go to stderr with a nonzero exit code. `--store` selects a local state directory; the default is `~/.pear-artifact`. The existing default directory is retained so the rename does not hide previously initialized registries. Keep each device's state separate. Never share the publisher's entire state directory as an invitation: it contains private signing keys.
+Commands print JSON to stdout. Errors go to stderr with a nonzero exit code. `--store` selects a local state directory; the default is `RELAY_STORE` when set, otherwise `~/.pear-artifact`. `bun run dev` sets it to `.relayjs/development`; installed `relay` and `bun run start` keep the production default. The existing default directory is retained so the rename does not hide previously initialized registries. Keep each device's state separate. Never share the publisher's entire state directory as an invitation: it contains private signing keys.
 
 ## First-run setup
 
-`seed NAME@VERSION` requires an initialized or joined registry. To publish your own file in the default store:
+`seed NAME@VERSION` requires an initialized or joined registry. To publish your own file in the development store:
 
 ```sh
-bun run relay init
-bun run relay publish ./my-app.zip --name app --version 1.0
-bun run relay seed app@1.0
+bun run dev init
+bun run dev publish ./my-app.zip --name app --version 1.0
+bun run dev seed app@1.0
 ```
 
 Replace `./my-app.zip` with an existing file. If you are receiving another publisher's artifact, join their registry and establish mutual device trust as shown below. If the registry was created with `--store`, use that same option for subsequent commands. A missing registry error does not mean you should overwrite or recreate an existing store elsewhere.

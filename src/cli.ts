@@ -55,7 +55,7 @@ Commands:
   seed [NAME@VERSION]
 
 Options:
-  --store DIR        Registry directory (default: ~/.pear-artifact)
+  --store DIR        Registry directory (default: RELAY_STORE or ~/.pear-artifact)
   --timeout MS       Network timeout in milliseconds (default: 15000)
   --bootstrap HOST:PORT  Bootstrap peer; may be repeated or comma-separated
   --help, -h         Show this help
@@ -100,7 +100,7 @@ function parseOptions(args: string[]) {
   return {
     positionals: parsed.positionals,
     help: parsed.values.help === true,
-    store: resolve(parsed.values.store ?? `${homedir()}/.pear-artifact`),
+    store: resolve(parsed.values.store ?? (process.env.RELAY_STORE || `${homedir()}/.pear-artifact`)),
     timeout,
     bootstrap,
     output: parsed.values.output,

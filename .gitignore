@@ -22,3 +22,9 @@ build/
 publisher/
 reader/
 downloads/
+
+# Release packages
+artifacts/
+
+# Development CLI registry
+.relayjs/

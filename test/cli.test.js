@@ -11,9 +11,9 @@ import { run } from '../dist/src/cli.js'
 const execFileAsync = promisify(execFile)
 const cli = join(process.cwd(), 'dist', 'bin', 'relay.js')
 
-async function invoke(args) {
+async function invoke(args, env = {}) {
   try {
-    return await execFileAsync(process.execPath, [cli, ...args], { timeout: 5_000 })
+    return await execFileAsync(process.execPath, [cli, ...args], { timeout: 5_000, env: { ...process.env, ...env } })
   } catch (error) {
     return { stdout: error.stdout, stderr: error.stderr, code: error.code }
   }
@@ -210,4 +210,27 @@ test('seed without a registry explains setup and does not create registry data',
   assert.doesNotMatch(result.stderr, /ENOENT/)
   assert.equal(result.stdout, '')
   assert.deepEqual(await readdir(store), [])
+})
+
+
+test('development store environment is isolated and explicit store wins', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'relayjs-environments-'))
+  t.after(() => rm(directory, { recursive: true, force: true }))
+  const development = join(directory, 'development')
+  const home = join(directory, 'home')
+  const env = { RELAY_STORE: development, HOME: home }
+  const initialized = JSON.parse((await invoke(['init'], env)).stdout)
+  assert.equal(initialized.store, development)
+  const identity = JSON.parse((await invoke(['identity'], env)).stdout)
+  assert.equal(identity.registryKey, initialized.registryKey)
+  await assert.rejects(readdir(join(home, '.pear-artifact')), { code: 'ENOENT' })
+
+  const explicit = join(directory, 'explicit')
+  const override = JSON.parse((await invoke(['init', '--store', explicit], env)).stdout)
+  assert.equal(override.store, explicit)
+  assert.notEqual(override.registryKey, initialized.registryKey)
+
+  const production = JSON.parse((await invoke(['init'], { ...env, RELAY_STORE: '' })).stdout)
+  assert.equal(production.store, join(home, '.pear-artifact'))
+  assert.notEqual(production.registryKey, initialized.registryKey)
 })
